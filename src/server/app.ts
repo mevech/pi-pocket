@@ -987,6 +987,11 @@ export class PocketApp {
         return this.#boxes?.names ?? [];
     }
 
+    /** The sandbox kind a new session gets unless its request chooses; undefined: this machine. */
+    get defaultBox(): string | undefined {
+        return this.#boxes?.defaultName;
+    }
+
     /** The sandbox kind a conversation's tools run in, by its session's record: undefined on this machine. */
     boxOf(id: ConversationId): string | undefined {
         return this.#sessions[String(id)]?.box ?? this.#sessions[String(this.rootOf(id))]?.box;
@@ -1775,6 +1780,7 @@ export class PocketApp {
                 defaultCwd: this.defaultCwd,
                 // The sandbox kinds a new session may run its tools in, besides this machine.
                 boxes: [...this.boxNames],
+                defaultBox: this.defaultBox ?? null,
                 extensions: this.loader.extensionNames(),
                 // The browser modules this person's tabs load (`extension-ui.js`), each with the tools its module
                 // installs: the only ones whose calls it may describe (`pocket.toolCall`).

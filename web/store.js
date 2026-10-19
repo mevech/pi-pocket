@@ -1083,8 +1083,12 @@ export const actions = {
     unwatchPr: () => api(`c/${current()}/watch`, { stop: true }),
     approve: (id, allow) => api(`approvals/${encodeURIComponent(id)}`, { allow }),
     /** `worktree`: the session works in a git worktree of its own, made from the folder; `box`: in a sandbox instead. */
-    createSession: (cwd, { worktree = false, box = "" } = {}) =>
-        api("sessions", { cwd, ...(worktree ? { worktree } : {}), ...(box ? { box } : {}) }),
+    createSession: (cwd, { worktree = false, box } = {}) =>
+        api("sessions", {
+            cwd,
+            ...(worktree ? { worktree } : {}),
+            ...(box === undefined ? {} : { box }),
+        }),
     updateSession: (id, patch) => api(`sessions/${id}`, patch),
     upload: (file) => api(`c/${current()}/upload?name=${encodeURIComponent(file.name)}`, file),
     fullEntry: (entryId) => api(`c/${current()}/entry/${entryId}`),

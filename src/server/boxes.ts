@@ -13,6 +13,8 @@ export type BoxRef = { name: string; template: string };
 export interface Boxes {
     /** The kinds offered, as the New-session dialog and the subagent tool list them. */
     readonly names: readonly string[];
+    /** The kind a new session gets when its request names none; undefined: this machine. */
+    readonly defaultName?: string;
     env(ref: BoxRef): ExecutionEnv;
     cleanup(context: Context): Promise<void>;
 }

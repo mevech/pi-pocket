@@ -129,7 +129,7 @@ export function CwdSheet({ mode }) {
     const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === "1");
     const [worktree, setWorktree] = useState(false);
     // The sandbox kind the session's tools run in, or "" for this machine; the server lists the kinds it has.
-    const [box, setBox] = useState("");
+    const [box, setBox] = useState(store.state.server?.defaultBox ?? "");
     const boxes = store.state.server?.boxes ?? [];
     // Typing a new folder's name, or a path to go to; and a path typed that is not there yet.
     const [naming, setNaming] = useState(false);

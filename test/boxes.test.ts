@@ -64,6 +64,7 @@ describe("sessions in a sandbox", () => {
     const requested: BoxRef[] = [];
     const boxes: Boxes = {
         names: ["coding", "ops"],
+        defaultName: "coding",
         env: (ref) => {
             requested.push(ref);
 
@@ -164,9 +165,15 @@ describe("sessions in a sandbox", () => {
         await assert.rejects(app.workspace.fileList(id, owner(app)), /sandbox pod/);
     });
 
+    it("given no box in the request, when a session is created, then it gets the server's default", async () => {
+        const { id } = await app.commands.createSession(owner(app), { cwd: work });
+
+        assert.equal(app.sessionMeta(id)?.box, "coding");
+    });
+
     it("given a session on this machine, when Pi runs a command, then no box is involved", async () => {
         const before = requested.length;
-        const { id } = await app.commands.createSession(owner(app), { cwd: work });
+        const { id } = await app.commands.createSession(owner(app), { cwd: work, box: "" });
 
         await app.commands.configure(id, owner(app), {
             model: { provider: "faux", modelId: "faux-1" },

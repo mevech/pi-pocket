@@ -369,7 +369,8 @@ export class Commands {
 
         const given = optionalText(request.title, "title");
         const title = (given === undefined ? undefined : oneLine(given)) || undefined;
-        const box = this.#boxOf(request.box);
+        // A request that says nothing gets the server's default; "" asks for this machine.
+        const box = this.#boxOf(request.box === undefined ? app.defaultBox : request.box);
 
         if (box !== undefined && request.worktree === true) {
             throw new HttpError(400, "A session in a sandbox has no git worktree on this machine.");
