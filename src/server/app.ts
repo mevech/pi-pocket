@@ -37,7 +37,9 @@ import {
     UsageDoc,
     type UsageState,
 } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import type { Boxes } from "./boxes.ts";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { Alerts } from "./alerts.ts";
@@ -49,6 +51,8 @@ import { Commands } from "./commands.ts";
 import { LinkedSessions } from "./linked-sessions.ts";
 import { APP_ROOT, ConfigStore, type User } from "./config.ts";
 import {
+    BoxDoc,
+    type BoxValue,
     ArtifactBodyDoc,
     type ArtifactMeta,
     ArtifactsDoc,
@@ -240,6 +244,8 @@ export interface OpenOptions {
     browser?: string | null;
     /** The home folder, whose `.agents/skills/` every session has. Undefined is Pi's: `$HOME`. Tests use their own. */
     home?: string;
+    /** Sandboxes conversations may run their tools in instead of this machine (`boxes.ts`); none without. */
+    boxes?: Boxes;
 }
 
 export class PocketApp {
@@ -306,6 +312,7 @@ export class PocketApp {
     readonly #clients = new Set<Client>();
     readonly #rooms = new Map<ConversationId, Promise<Room>>();
     readonly #envs = new Map<string, NodeExecutionEnv>();
+    readonly #boxes: Boxes | undefined;
     readonly #busy = new Set<ConversationId>();
     /** When each conversation's last run ended, since this server started: peek tiles show sessions done since a look. */
     readonly #endedAt = new Map<ConversationId, number>();
@@ -343,6 +350,7 @@ export class PocketApp {
         this.now = options.now ?? Date.now;
         this.dataDir = options.dataDir;
         this.defaultCwd = options.defaultCwd;
+        this.#boxes = options.boxes;
         this.supervised = options.supervised;
         this.config = new ConfigStore(options.dataDir);
         this.#lockFile = join(options.dataDir, "harness.lock");
@@ -522,6 +530,7 @@ export class PocketApp {
             skills: (cwd) => this.skills(cwd),
             resolveModel: (spec) => resolveModel(this.models, spec, this.signInNeeded),
             subagentModels: () => this.config.subagentModels,
+            boxes: () => this.boxNames,
             modelProblem: (ref, fresh) => this.providers.problem(ref, fresh),
             requesterOf: (conversationId) => this.attribution.requesterOf(conversationId),
             notice: (level, message, conversationId) => this.notice(level, message, conversationId),
@@ -584,12 +593,25 @@ export class PocketApp {
                 registry,
                 settings: this.#harnessSettings(),
                 now: this.now,
-                env: ({ cwd }) => this.#env(cwd ?? this.defaultCwd),
+                env: async ({ conversationId, cwd, read }, context) =>
+                    this.#envOf(await read.snapshot(BoxDoc, conversationId, context), cwd),
                 conversationCreated: async (tx, conversation) => {
                     // Every conversation gets the app's documents up front, so views can read them from the start.
                     await tx.doc(AuthorsDoc, conversation.id);
                     await tx.doc(ArtifactsDoc, conversation.id);
                     await tx.doc(SubagentsDoc, conversation.id);
+
+                    // A subagent's tools run where its parent's do, unless its spawn asks for a box of its own.
+                    if (conversation.owner !== undefined) {
+                        const parent = await tx.doc(BoxDoc, conversation.owner.conversationId);
+
+                        if (parent.box !== undefined && parent.claim !== undefined) {
+                            Object.assign(await tx.doc(BoxDoc, conversation.id), {
+                                box: parent.box,
+                                claim: parent.claim,
+                            });
+                        }
+                    }
                 },
                 onReport: (error) => this.notice("warning", describe(error)),
             },
@@ -955,9 +977,27 @@ export class PocketApp {
         } as HarnessSettings;
     }
 
-    /** Where a conversation's commands run: its folder on this machine. */
-    envFor(id: ConversationId): NodeExecutionEnv {
-        return this.#env(this.cwdOf(id));
+    /** Where a conversation's commands run: its sandbox, or its folder on this machine. */
+    async envFor(id: ConversationId): Promise<ExecutionEnv> {
+        return this.#envOf(await this.harness.snapshot(BoxDoc, id, context), this.cwdOf(id));
+    }
+
+    /** The sandbox kinds this server offers, none when it has no sandboxes. */
+    get boxNames(): readonly string[] {
+        return this.#boxes?.names ?? [];
+    }
+
+    /** The sandbox kind a conversation's tools run in, by its session's record: undefined on this machine. */
+    boxOf(id: ConversationId): string | undefined {
+        return this.#sessions[String(id)]?.box ?? this.#sessions[String(this.rootOf(id))]?.box;
+    }
+
+    #envOf(box: Readonly<BoxValue> | undefined, cwd: string | undefined): ExecutionEnv {
+        if (this.#boxes !== undefined && box?.box !== undefined && box.claim !== undefined) {
+            return this.#boxes.env({ name: box.claim, template: box.box });
+        }
+
+        return this.#env(cwd ?? this.defaultCwd);
     }
 
     #env(cwd: string): NodeExecutionEnv {
@@ -1733,6 +1773,8 @@ export class PocketApp {
                 startedAt: this.startedAt,
                 home: homedir(),
                 defaultCwd: this.defaultCwd,
+                // The sandbox kinds a new session may run its tools in, besides this machine.
+                boxes: [...this.boxNames],
                 extensions: this.loader.extensionNames(),
                 // The browser modules this person's tabs load (`extension-ui.js`), each with the tools its module
                 // installs: the only ones whose calls it may describe (`pocket.toolCall`).
@@ -1943,6 +1985,7 @@ export class PocketApp {
         const forkedFrom = meta?.forkedFrom;
         const root = this.rootOf(room.id);
         const budget = this.#sessions[String(root)]?.budget;
+        const box = this.boxOf(room.id);
 
         return {
             id: room.id,
@@ -1958,6 +2001,8 @@ export class PocketApp {
                 (meta === undefined ? `Conversation ${String(room.id)}` : "New session"),
             cwd: agent.cwd ?? meta?.cwd ?? this.defaultCwd,
             archived: meta?.archived === true,
+            // Its tools run in a sandbox pod: the tiles that read this machine's disk do not apply.
+            ...(box === undefined ? {} : { box }),
             // PiP's own conversation, opened as a page: some session things (a PR to watch) are not for it.
             ...(meta?.pip === undefined ? {} : { pip: true }),
             ...(room.parent === undefined ? {} : { parent: room.parent }),
@@ -2872,6 +2917,8 @@ export class PocketApp {
                 for (const env of this.#envs.values()) {
                     await env.cleanup(context);
                 }
+
+                await this.#boxes?.cleanup(context);
             } finally {
                 // After the harness: a browser call cut off by the stop resumes as interrupted, not as failed.
                 await this.browsers.closeAll({ final: true }).catch(() => {});

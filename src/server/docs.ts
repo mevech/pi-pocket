@@ -37,7 +37,24 @@ export type SessionMeta = {
      * kept out of the session list; an older Pi Pocket, which does not know this field, lists it as a session.
      */
     pip?: string;
+    /** The sandbox kind the session's tools run in, when they run in a sandbox rather than on this machine. */
+    box?: string;
 };
+
+/**
+ * Where a conversation's tools run when not on this machine: the kind of sandbox (`box`) and the claim naming its pod.
+ * Forks keep their source's; a subagent keeps its parent's unless it asked for a box of its own.
+ */
+export type BoxValue = { box?: string; claim?: string };
+
+export const BoxDoc = defineDoc<BoxValue>({
+    kind: "pocket.box",
+    version: 1,
+    scope: "conversation",
+    history: "latest",
+    fork: "current",
+    initial: () => ({}),
+});
 
 /** The catalogue of user-facing sessions: ownerless conversations created by the app. Subagents are not listed. */
 export const SessionsDoc = defineDoc<{ items: Record<string, SessionMeta> }>({

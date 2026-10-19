@@ -18,7 +18,8 @@ const WIDTH_KEY = "pocket.filesWidth";
 const SIDE_BY_SIDE = 600;
 
 /** The tile is for people who can steer: the viewer reads files as Pi would. */
-export const filesAvailable = () => canSteer() && store.state.conversationId !== null;
+export const filesAvailable = () =>
+    canSteer() && store.state.conversationId !== null && !store.state.view?.conversation?.box;
 
 /** Show or hide the tile. It takes the Browser and People panels' place. */
 export function setFilesOpen(open, tab) {

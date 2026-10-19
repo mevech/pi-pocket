@@ -128,6 +128,9 @@ export function CwdSheet({ mode }) {
     const [selected, setSelected] = useState(null);
     const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === "1");
     const [worktree, setWorktree] = useState(false);
+    // The sandbox kind the session's tools run in, or "" for this machine; the server lists the kinds it has.
+    const [box, setBox] = useState("");
+    const boxes = store.state.server?.boxes ?? [];
     // Typing a new folder's name, or a path to go to; and a path typed that is not there yet.
     const [naming, setNaming] = useState(false);
     const [editing, setEditing] = useState(null);
@@ -247,7 +250,7 @@ export function CwdSheet({ mode }) {
                 await actions.configure({ cwd: path });
                 closeSheet();
             } else {
-                const created = await actions.createSession(path, { worktree });
+                const created = await actions.createSession(path, { worktree, box });
 
                 navigate(created.id);
             }
@@ -641,6 +644,7 @@ export function CwdSheet({ mode }) {
             <div class="fp-options">
                 ${
                     !changing &&
+                    box === "" &&
                     html`<label
                         class="check"
                         title="The session gets a branch of its own, apart from this folder"
@@ -651,6 +655,20 @@ export function CwdSheet({ mode }) {
                             onChange=${(event) => setWorktree(event.currentTarget.checked)}
                         />
                         Own git worktree
+                    </label>`
+                }
+                ${
+                    !changing &&
+                    boxes.length > 0 &&
+                    html`<label
+                        class="check"
+                        title="Run the session's tools in a sandbox pod; it starts empty, Pi clones what it needs"
+                    >
+                        Run in
+                        <select value=${box} onChange=${(event) => setBox(event.currentTarget.value)}>
+                            <option value="">this machine</option>
+                            ${boxes.map((name) => html`<option value=${name}>${name} sandbox</option>`)}
+                        </select>
                     </label>`
                 }
                 <label class="check">

@@ -72,8 +72,22 @@ export class Workspace {
         return this.#gitDir(cwd) !== undefined;
     }
 
+    /** The tiles that read this machine's disk have nothing to show for a conversation whose tools run in a sandbox. */
+    #noBox(id: ConversationId): void {
+        if (this.#app.boxOf(id) !== undefined) {
+            throw new HttpError(
+                409,
+                "This session's files are in a sandbox pod; Files, Changes and branches are not available for it yet.",
+            );
+        }
+    }
+
     /** What a conversation's folder has checked out, for its view: its repository's HEAD file, read as it is now. */
     head(id: ConversationId): Head | undefined {
+        if (this.#app.boxOf(id) !== undefined) {
+            return undefined;
+        }
+
         const gitDir = this.#gitDir(this.#app.cwdOf(id));
 
         return gitDir === undefined ? undefined : headOf(gitDir);
@@ -81,6 +95,7 @@ export class Workspace {
 
     /** The branches of a session's repository, for the branch sheet: for people who can steer, as Changes is. */
     async branches(id: ConversationId, user: User): Promise<Branches> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
 
@@ -106,6 +121,7 @@ export class Workspace {
         user: User,
         request: { name?: unknown; create?: unknown; track?: unknown },
     ): Promise<{ branch: string }> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
 
@@ -346,6 +362,7 @@ export class Workspace {
      * names under the folder only, so someone invited to one session sees no more than `conversationFile` lets them load.
      */
     async fileList(id: ConversationId, user: User): Promise<FileListing> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
         await this.#app.conversation(id);
@@ -362,6 +379,7 @@ export class Workspace {
         user: User,
         path: string,
     ): Promise<{ path: string; display: string } & FileView> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
         await this.#app.conversation(id);
@@ -389,6 +407,7 @@ export class Workspace {
      * right to drive and waits until Pi is not working; Pi is told, with its next message.
      */
     async revertChange(id: ConversationId, user: User, path: string): Promise<void> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         await this.#app.requireDriver(id, user);
 
@@ -416,6 +435,7 @@ export class Workspace {
 
     /** What changed in a session's folder: Pi's edits, and the uncommitted changes of its git repository. */
     async changes(id: ConversationId, user: User): Promise<Changes> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
 
@@ -452,6 +472,7 @@ export class Workspace {
 
     /** The diff of one changed file in a session's repository. */
     async changeDiff(id: ConversationId, user: User, path: string): Promise<string> {
+        this.#noBox(id);
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
 

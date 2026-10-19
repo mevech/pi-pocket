@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { defineExtension, type PromptInput, section } from "@earendil-works/pi-durable";
 import { APP_ROOT } from "../config.ts";
+import { BoxDoc } from "../docs.ts";
 import type { PocketHost } from "../host.ts";
 
 const PREAMBLE = `You are Pi, a coding agent running inside Pi Pocket: a durable, multiplayer web app built on Pi Durable. People talk to you from a browser, often a phone, and several people can share one conversation. When more than one person uses this server, each message starts with [from: Name].
@@ -51,6 +52,9 @@ type Resources = {
     context: string | undefined;
     skills: string | undefined;
 };
+
+/** For conversations whose tools run in a sandbox pod rather than on this machine. */
+const SANDBOX = `Your file and shell tools run in a Linux sandbox pod, not on the machine serving this app. Its working directory /workspace starts empty: clone the repository you need with git, work on a branch, and push it when done. The sandbox can be recycled between turns; if /workspace is empty again, clone again.`;
 
 export default function createPrompt(host: PocketHost) {
     // Context files and skills load once per directory, and again when the copy is older than STALE_MS, or Pi's trust
@@ -115,6 +119,12 @@ export default function createPrompt(host: PocketHost) {
             section("pocket_docs", () => docs(host.dataDir)),
             section("project_context", (input) => load(cwdOf(input)).context),
             section("skills", (input) => load(cwdOf(input)).skills, { tag: false }),
+            section("sandbox", async (input, context) =>
+                (await input.read.snapshot(BoxDoc, input.conversationId, context))?.claim ===
+                undefined
+                    ? undefined
+                    : SANDBOX,
+            ),
             section("environment", (input) => {
                 // The date only, so the prompt stays cache-friendly through the day.
                 const today = new Date().toISOString().slice(0, 10);

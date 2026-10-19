@@ -183,15 +183,19 @@ try {
 
 server.on("error", (error) => console.error("Server error:", error));
 
-const [{ PocketApp: App }, { createHandler: makeHandler }, { watchTree }] = await Promise.all([
-    import("./app.ts"),
-    import("./http.ts"),
-    import("./reload.ts"),
-]);
+const [{ PocketApp: App }, { createHandler: makeHandler }, { watchTree }, { loadBoxes }] =
+    await Promise.all([
+        import("./app.ts"),
+        import("./http.ts"),
+        import("./reload.ts"),
+        import("./boxes.ts"),
+    ]);
+const boxes = await loadBoxes();
 const opened = await App.open({
     dataDir: options.data,
     defaultCwd: options.cwd,
     supervised: process.env.PI_POCKET_SUPERVISED === "1",
+    ...(boxes === undefined ? {} : { boxes }),
 });
 
 app = opened;

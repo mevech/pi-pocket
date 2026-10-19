@@ -225,6 +225,8 @@ export interface PocketHost {
      * Empty, the default: none.
      */
     subagentModels(): readonly string[];
+    /** The sandbox kinds a subagent may ask to run its tools in, none when this server has no sandboxes. */
+    boxes(): readonly string[];
     /**
      * Why Pi may not use a model now, in words for Pi to pass on (not known here, its provider not signed in, or its
      * sign-in expired), or undefined when it may. `fresh` asks the provider's sign-in again first.

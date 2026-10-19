@@ -33,7 +33,7 @@ import {
     type TaskRuntime,
     type Tx,
 } from "@earendil-works/pi-durable";
-import { type PendingReport, REPORT_PREFIX, SubagentsDoc } from "../docs.ts";
+import { BoxDoc, type PendingReport, REPORT_PREFIX, SubagentsDoc } from "../docs.ts";
 import { describe } from "../errors.ts";
 import type { PocketHost } from "../host.ts";
 import { levelAtMost, sameModel, THINKING_LEVELS } from "../models.ts";
@@ -658,6 +658,10 @@ function allowedModels(host: PocketHost): readonly string[] {
     return typeof host.subagentModels === "function" ? host.subagentModels() : [];
 }
 
+function allowedBoxes(host: PocketHost): readonly string[] {
+    return typeof host.boxes === "function" ? host.boxes() : [];
+}
+
 /** `provider/modelId` as a model reference. */
 function refOf(spec: string): ModelRef | undefined {
     const slash = spec.indexOf("/");
@@ -794,17 +798,29 @@ export default function createSubagents(host: PocketHost) {
             }),
         ),
     };
-    const offered = Type.Object({
-        ...base,
+    const modelParameter = {
         model: Type.Optional(
             Type.String({
                 description:
                     "spawn only: one of the models the user allows for subagents, listed in your instructions, as provider/modelId. Leave it out to use your own model.",
             }),
         ),
-    });
-    // Without a choice, no model parameter at all. A model passed anyway is still refused.
-    const parameters = choosing ? offered : (Type.Object(base) as unknown as typeof offered);
+    };
+    const boxed = allowedBoxes(host).length > 0;
+    const boxParameter = {
+        box: Type.Optional(
+            Type.String({
+                description: `spawn only: run its tools in a sandbox pod of this kind, apart from where yours run: one of ${allowedBoxes(host).join(", ")}. Leave it out to share your files.`,
+            }),
+        ),
+    };
+    const offered = Type.Object({ ...base, ...modelParameter, ...boxParameter });
+    // Without a choice, no model or box parameter at all. One passed anyway is still refused.
+    const parameters = Type.Object({
+        ...base,
+        ...(choosing ? modelParameter : {}),
+        ...(boxed ? boxParameter : {}),
+    }) as unknown as typeof offered;
 
     const subagent = defineTool({
         name: "subagent",
@@ -980,6 +996,21 @@ export default function createSubagents(host: PocketHost) {
                 }
             }
 
+            const box = action === "spawn" ? (args as { box?: unknown }).box : undefined;
+
+            if (
+                box !== undefined &&
+                (typeof box !== "string" || !allowedBoxes(host).includes(box))
+            ) {
+                const kinds = allowedBoxes(host);
+
+                return reply(
+                    kinds.length === 0
+                        ? "This server has no sandboxes; leave box out."
+                        : `No sandbox "${String(box)}" here; the kinds are ${kinds.join(", ")}.`,
+                );
+            }
+
             const result = await api.commit(async (tx) => {
                 const state = await tx.doc(SubagentsDoc, api.conversationId);
 
@@ -1001,6 +1032,15 @@ export default function createSubagents(host: PocketHost) {
                         ...(thinking === undefined ? {} : { thinkingLevel: thinking }),
                         ...(tools === undefined ? {} : { tools }),
                     });
+
+                    if (box !== undefined) {
+                        // Its own sandbox, apart from the parent's copied in `conversationCreated`.
+                        Object.assign(await tx.doc(BoxDoc, child.id), {
+                            box,
+                            claim: `sub-${String(child.id)}`,
+                        });
+                    }
+
                     state.agents[name] = { conversationId: child.id, reported: [] };
                 }
 

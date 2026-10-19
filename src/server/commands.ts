@@ -33,6 +33,7 @@ import {
 import type { PocketApp } from "./app.ts";
 import type { User } from "./config.ts";
 import {
+    BoxDoc,
     AuthorsDoc,
     ChatDoc,
     NotesDoc,
@@ -139,6 +140,9 @@ const MAX_INSTRUCTIONS = 8000;
 
 /** Where a new session works: a folder, and the worktree it is in when the session has one of its own. */
 type Place = { cwd: string; worktree?: Worktree; skipped: string[] };
+
+/** Where a session's tools work inside a sandbox pod: it starts empty, Pi clones into it. */
+const BOX_CWD = "/workspace";
 
 /** An entry id from a request, or a 400. */
 function entryIdOf(value: unknown): number {
@@ -346,10 +350,13 @@ export class Commands {
         });
     }
 
-    /** Start a session in a folder; with `worktree`, in a git worktree of its own made from that folder. */
+    /**
+     * Start a session in a folder; with `worktree`, in a git worktree of its own made from that folder; with `box`, in
+     * a sandbox pod of that kind instead of a folder on this machine.
+     */
     async createSession(
         user: User,
-        request: { cwd?: string; title?: string; worktree?: unknown },
+        request: { cwd?: string; title?: string; worktree?: unknown; box?: unknown },
         { projectDefaults = true }: { projectDefaults?: boolean } = {},
     ): Promise<{ id: ConversationId }> {
         const app = this.#app;
@@ -362,18 +369,28 @@ export class Commands {
 
         const given = optionalText(request.title, "title");
         const title = (given === undefined ? undefined : oneLine(given)) || undefined;
-        const folder = app.workspace.checkDirectory(
-            optionalText(request.cwd, "cwd") ?? app.defaultCwd,
-        );
+        const box = this.#boxOf(request.box);
+
+        if (box !== undefined && request.worktree === true) {
+            throw new HttpError(400, "A session in a sandbox has no git worktree on this machine.");
+        }
+
+        const folder =
+            box === undefined
+                ? app.workspace.checkDirectory(optionalText(request.cwd, "cwd") ?? app.defaultCwd)
+                : BOX_CWD;
         const now = Date.now();
 
         return this.#inPlace(
             folder,
             request.worktree === true,
-            title ?? basename(folder),
+            title ?? (box === undefined ? basename(folder) : `${box} sandbox`),
             async ({ cwd, worktree }) => {
                 // An internal caller about to apply a person's explicit model keeps its previous starting pair.
-                const initial = this.#defaultModel(undefined, projectDefaults ? cwd : undefined);
+                const initial = this.#defaultModel(
+                    undefined,
+                    projectDefaults && box === undefined ? cwd : undefined,
+                );
                 const conversation = await app.harness.createConversation(
                     {
                         ownership: { kind: "ownerless" },
@@ -394,7 +411,15 @@ export class Commands {
                                 createdBy: user.id,
                                 ...(title === undefined ? {} : { title }),
                                 ...(worktree === undefined ? {} : { worktree }),
+                                ...(box === undefined ? {} : { box }),
                             };
+
+                            if (box !== undefined) {
+                                Object.assign(await tx.doc(BoxDoc, id), {
+                                    box,
+                                    claim: `conv-${String(id)}`,
+                                });
+                            }
                         },
                     },
                     context,
@@ -403,6 +428,26 @@ export class Commands {
                 return { id: conversation.id };
             },
         );
+    }
+
+    /** A sandbox kind from a request: one this server offers, or none; anything else is a 400. */
+    #boxOf(value: unknown): string | undefined {
+        if (value === undefined || value === null || value === "") {
+            return undefined;
+        }
+
+        const names = this.#app.boxNames;
+
+        if (typeof value !== "string" || !names.includes(value)) {
+            throw new HttpError(
+                400,
+                names.length === 0
+                    ? "This server has no sandboxes."
+                    : `No sandbox "${String(value)}" here; the kinds are ${names.join(", ")}.`,
+            );
+        }
+
+        return value;
     }
 
     /**
@@ -1850,6 +1895,10 @@ export class Commands {
         const sourceTitle = meta.title ?? "New session";
         const title = `${sourceTitle} · ${branch.label}`.slice(0, MAX_TITLE);
 
+        if (meta.box !== undefined && branch.worktree) {
+            throw new HttpError(400, "A session in a sandbox has no git worktree on this machine.");
+        }
+
         return this.#inPlace(source?.cwd ?? meta.cwd, branch.worktree, title, (place) =>
             this.#fork(id, user, { ...branch, title, sourceTitle, place }),
         );
@@ -1884,6 +1933,8 @@ export class Commands {
             at === undefined ? await app.harness.snapshot(PlanDoc, id, context) : undefined;
         const notes =
             at === undefined ? await app.harness.snapshot(NotesDoc, id, context) : undefined;
+        const box = at === undefined ? await app.harness.snapshot(BoxDoc, id, context) : undefined;
+        const sourceBox = app.sessionMeta(id)?.box;
 
         const init: ConversationCreateOptions["init"] = async (tx, forked) => {
             const sessions = await tx.doc(SessionsDoc);
@@ -1896,6 +1947,7 @@ export class Commands {
                 createdBy: user.id,
                 forkedFrom: { id: Number(id), ...(at === undefined ? {} : { entryId: at }) },
                 ...(place.worktree === undefined ? {} : { worktree: place.worktree }),
+                ...(sourceBox === undefined ? {} : { box: sourceBox }),
             };
 
             if (fork.resend !== undefined) {
@@ -1909,6 +1961,10 @@ export class Commands {
             if (at === undefined) {
                 if (plan !== undefined) {
                     Object.assign(await tx.doc(PlanDoc, forked), structuredClone(plan));
+                }
+
+                if (box !== undefined) {
+                    Object.assign(await tx.doc(BoxDoc, forked), structuredClone(box));
                 }
 
                 if (notes !== undefined) {
